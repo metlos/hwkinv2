@@ -17,6 +17,7 @@
 package org.hawkular.inventory.model;
 
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 
 import org.hawkular.inventory.paths.CanonicalPath;
@@ -29,6 +30,14 @@ public final class Entity {
     private final CanonicalPath path;
     private final String name;
     private final Map<String, String> properties;
+
+    public static Builder at(CanonicalPath cp) {
+        return new Builder(cp);
+    }
+
+    public static Builder at(String path) {
+        return at(CanonicalPath.fromString(path));
+    }
 
     public Entity(CanonicalPath path, String name, Map<String, String> properties) {
         this.path = path;
@@ -85,6 +94,35 @@ public final class Entity {
 
         public Map<String, String> getProperties() {
             return properties;
+        }
+    }
+
+    public static final class Builder {
+        private final CanonicalPath cp;
+        private String name;
+        private Map<String, String> properties = new HashMap<>();
+
+        private Builder(CanonicalPath cp) {
+            this.cp = cp;
+        }
+
+        public Builder withName(String name) {
+            this.name = name;
+            return this;
+        }
+
+        public Builder withProperties(Map<String, String> properties) {
+            this.properties.putAll(properties);
+            return this;
+        }
+
+        public Builder withProperty(String key, String value) {
+            this.properties.put(key, value);
+            return this;
+        }
+
+        public Entity build() {
+            return new Entity(cp, name, properties);
         }
     }
 }

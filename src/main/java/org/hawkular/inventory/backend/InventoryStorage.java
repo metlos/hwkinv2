@@ -35,7 +35,10 @@ import org.cassalog.core.Cassalog;
 import org.cassalog.core.CassalogBuilder;
 import org.hawkular.inventory.logging.Log;
 import org.hawkular.inventory.model.Entity;
+import org.hawkular.inventory.model.InventoryStructure;
+import org.hawkular.inventory.model.SyncRequest;
 import org.hawkular.inventory.paths.CanonicalPath;
+import org.hawkular.inventory.paths.RelativePath;
 import org.hawkular.rx.cassandra.driver.RxSession;
 import org.hawkular.rx.cassandra.driver.RxSessionImpl;
 
@@ -43,7 +46,9 @@ import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.HostDistance;
 import com.datastax.driver.core.JdkSSLOptions;
 import com.datastax.driver.core.PoolingOptions;
+import com.datastax.driver.core.QueryLogger;
 import com.datastax.driver.core.QueryOptions;
+import com.datastax.driver.core.Row;
 import com.datastax.driver.core.SSLOptions;
 import com.datastax.driver.core.Session;
 import com.datastax.driver.core.SocketOptions;
@@ -75,7 +80,7 @@ public class InventoryStorage {
         initSchema(cSession, keyspace);
 
         session = new RxSessionImpl(cSession);
-        statements = new Statements(session);
+        statements = new Statements(session, cSession);
         childrenCountCache = new ChildrenCountCache();
         childrenCountCache.initialize(statements);
     }
@@ -166,6 +171,14 @@ public class InventoryStorage {
 
         Cluster cluster = clusterBuilder.build();
         cluster.init();
+
+        QueryLogger queryLogger = QueryLogger.builder()
+                .withConstantThreshold(15000)
+                .withMaxQueryStringLength(1024)
+                .build();
+
+        cluster.register(queryLogger);
+        
         Session createdSession = null;
         try {
             createdSession = cluster.connect();
@@ -193,49 +206,101 @@ public class InventoryStorage {
         });
     }
 
-    public Observable<Void> insert(Entity entity) {
+    public Observable<Void> upsert(Entity entity) {
+        return _upsert(entity, false).map(e -> null);
+    }
+
+    private Observable<FullEntity> _upsert(Entity entity, boolean needFullEntity) {
         String tenantId = entity.getPath().ids().getTenantId();
         String fId = entity.getPath().ids().getFeedId();
         String feedId = fId == null ? FAKE_FEED_ID_FOR_TENANT : fId;
-        CanonicalPath parentPath = entity.getPath().up();
+        //get a new standalone CP with no reference to the original path (which the mere .up() call keeps)
+        CanonicalPath parentPath = entity.getPath().up().modified().get();
 
         String entityType = entity.getPath().getSegment().getElementType().toString();
         String entityPath = entity.getPath().toString();
         String name = entity.getName();
         Map<String, String> properties = entity.getProperties();
 
-        if (!parentPath.isDefined()) {
-            return statements.insertEntity(tenantId, feedId, entityType, entityPath, name, properties,
-                    BigDecimal.ZERO, BigDecimal.ONE, 0L, 1L, 1L, 1L, Collections.singletonList(1), 1);
-        } else {
-            String parentType = parentPath.isDefined()
-                    ? parentPath.getSegment().getElementType().toString()
-                    : null;
+        return statements.updateIfExists(tenantId, feedId, entityType, entityPath, name, properties).flatMap(update -> {
+            boolean applied = update.getBool(0);
+            if (applied) {
+                Log.LOG.warn("IN UPSERT: Found entity " + entityPath + " already exists.");
 
-            return statements.findByPath(tenantId, feedId, parentType, parentPath.toString()).flatMap(parentRow -> {
-                List<Integer> treePath = parentRow.getList("treePath", Integer.class);
-                int myIndex = childrenCountCache.incrementAndGet(parentPath);
-                treePath.add(myIndex);
+                if (!needFullEntity) {
+                    return Observable.just(null);
+                }
 
-                FareySequence.Interval interval = FareySequence.intervalForPath(treePath);
+                //k, the entity already exists and we just updated what was possible...
+                return statements.findByPath(tenantId, feedId, entityType, entityPath).map(FullEntity::fromRow);
+            } else {
+                Log.LOG.warn("IN UPSERT: Entity " + entityPath + " doesn't exist. Creating it.");
+                //k, need to create it
+                if (!parentPath.isDefined()) {
+                    FullEntity fe = new FullEntity();
+                    fe.entity = entity;
+                    fe.low = BigDecimal.ZERO;
+                    fe.high = BigDecimal.ONE;
+                    fe.lowNum = 0L;
+                    fe.lowDen = 1L;
+                    fe.highNum = 1L;
+                    fe.highDen = 1L;
+                    fe.treePath = Collections.singletonList(1);
+                    fe.depth = 1;
 
-                BigDecimal low = interval.getLow().toDecimal();
-                BigDecimal high = interval.getHigh().toDecimal();
-                long lowNum = interval.getLow().numerator;
-                long lowDen = interval.getLow().denominator;
-                long highNum = interval.getLow().numerator;
-                long highDen = interval.getLow().denominator;
-                int depth = treePath.size();
+                    return statements.insertEntity(tenantId, feedId, entityType, entityPath, name, properties,
+                            fe.low, fe.high, fe.lowNum, fe.lowDen, fe.highNum, fe.highDen, fe.treePath, fe.depth)
+                            .doOnNext(r -> Log.LOG.warn("IN UPSERT: Created tenant " + fe.entity.getPath()))
+                            .map(any -> fe);
+                } else {
+                    String parentType = parentPath.isDefined()
+                            ? parentPath.getSegment().getElementType().toString()
+                            : null;
+                    String parentFeedId = parentPath.ids().getFeedId();
+                    parentFeedId = parentFeedId == null ? FAKE_FEED_ID_FOR_TENANT : parentFeedId;
 
-                return statements.insertEntity(tenantId, feedId, entityType, entityPath, name, properties, low, high,
-                        lowNum, lowDen, highNum, highDen, treePath, depth);
-            });
-        }
+                    return statements.findByPath(tenantId, parentFeedId, parentType, parentPath.toString())
+                            .flatMap(parentRow -> {
+                                Log.LOG.trace("IN UPSERT: Found parent " + parentPath + " while creating "
+                                        + entityPath);
+                                List<Integer> treePath = parentRow.getList("treePath", Integer.class);
+                                int myIndex = childrenCountCache.incrementAndGet(parentPath);
+                                treePath.add(myIndex);
+
+                                FareySequence.Interval interval = FareySequence.intervalForPath(treePath);
+
+                                FullEntity fe = new FullEntity();
+                                fe.entity = entity;
+                                fe.low = interval.getLow().toDecimal();
+                                fe.high = interval.getHigh().toDecimal();
+                                fe.lowNum = interval.getLow().numerator;
+                                fe.lowDen = interval.getLow().denominator;
+                                fe.highNum = interval.getHigh().numerator;
+                                fe.highDen = interval.getHigh().denominator;
+                                fe.treePath = treePath;
+                                fe.depth = treePath.size();
+
+                                return statements.insertEntity(tenantId, feedId, entityType, entityPath, name,
+                                        properties, fe.low, fe.high, fe.lowNum, fe.lowDen, fe.highNum, fe.highDen,
+                                        fe.treePath, fe.depth)
+                                        .doOnNext(r -> Log.LOG.warn("IN UPSERT: Created child tenantId: " + tenantId
+                                                + ", feedId: " + feedId + ", entityType: " + entityType
+                                                + ", entityPath: " + entityPath + ", fe: " + fe))
+                                        .map(any -> fe);
+                            }).switchIfEmpty(Observable.error(new IllegalArgumentException("Could not create "
+                                    + entity.getPath() + ", because the parent (" + parentPath + ") was not found."
+                                    + " (Executed findByPath with args: tenantId: " + tenantId + ", feedId: "
+                                    + parentFeedId + ", entityType: " + parentType + ", entityPath: "
+                                    + parentPath.toString() + ").")));
+                }
+            }
+        });
     }
 
     public Observable<Void> delete(CanonicalPath cp) {
         String tenantId = cp.ids().getTenantId();
-        String feedId = cp.ids().getFeedId();
+        String fid = cp.ids().getFeedId();
+        String feedId = fid == null ? FAKE_FEED_ID_FOR_TENANT : fid;
         String entityType = cp.getSegment().getElementType().toString();
         String entityPath = cp.toString();
 
@@ -252,13 +317,53 @@ public class InventoryStorage {
                     Observable<Void> chain = Observable.empty();
                     for (String childPath : childPaths) {
                         String childType = CanonicalPath.fromString(childPath).getSegment().getElementType().toString();
-                        chain = chain.concatWith(statements.deleteEntity(tenantId, feedId, childType, childPath));
+                        chain = chain.mergeWith(statements.deleteEntity(tenantId, feedId, childType, childPath));
                     }
 
                     //XXX we're issuing a delete statement for each child here... maybe it'd be better to use IN clause
                     //and do one big statement for all children?
                     return chain;
                 }).toList().flatMap(allDone -> statements.deleteEntity(tenantId, feedId, entityType, entityPath));
+    }
+
+    public Observable<Void> sync(SyncRequest syncRequest) {
+        //first delete everything under the root
+        CanonicalPath rootPath = syncRequest.getInventoryStructure().getRoot().getPath();
+        String tenantId = rootPath.ids().getTenantId();
+        String feedId = rootPath.ids().getFeedId();
+
+        Map<CanonicalPath, Entity> entities = syncRequest.getInventoryStructure().getAllEntities();
+
+        return _upsert(syncRequest.getInventoryStructure().getRoot(), true).flatMap(fe -> {
+            Observable<Void> deleteWork = statements.getAllChildrenPaths(tenantId, feedId, fe.low, fe.high)
+                    .map(r -> CanonicalPath.fromString(r.getString(0)))
+                    .flatMap(cp -> {
+                        if (!entities.containsKey(cp)) {
+                            String childType = cp.getSegment().getElementType().toString();
+                            String childPath = cp.toString();
+                            Log.LOG.warn("IN SYNC: Deleting " + childPath + ", because it's not in the sync request.");
+                            return statements.deleteEntity(tenantId, feedId, childType, childPath);
+                        } else {
+                            return Observable.empty();
+                        }
+                    });
+
+            return deleteWork
+                    .mergeWith(insertRecursively(syncRequest.getInventoryStructure(), RelativePath.empty().get()));
+        });
+    }
+
+    private Observable<Void> insertRecursively(InventoryStructure struct, RelativePath parent) {
+        Observable<Void> work = Observable.empty();
+        for (Entity child : struct.getChildren(parent)) {
+            RelativePath childAsNewParent = parent.modified().extend(child.getPath().getSegment()).get();
+            
+            Observable<Void> childWork = upsert(child).concatWith(insertRecursively(struct, childAsNewParent));
+
+            work = work.mergeWith(childWork);
+        }
+
+        return work;
     }
 
     private void initSchema(Session session, String keyspace) {
@@ -305,6 +410,49 @@ public class InventoryStorage {
             throw new IllegalStateException(
                     "Failed to extract the version of Cassandra backend for Hawkular Inventory from the manifest file.",
                     e);
+        }
+    }
+
+    private static final class FullEntity {
+        Entity entity;
+        BigDecimal low;
+        BigDecimal high;
+        long lowNum;
+        long lowDen;
+        long highNum;
+        long highDen;
+        List<Integer> treePath;
+        int depth;
+
+        static FullEntity fromRow(Row r) {
+            FullEntity fe = new FullEntity();
+            Entity e = new Entity(CanonicalPath.fromString(r.getString("entityPath")), r.getString("name"),
+                    r.getMap("properties", String.class, String.class));
+
+            fe.entity = e;
+            fe.low = r.getDecimal("low");
+            fe.high = r.getDecimal("high");
+            fe.lowNum = r.getLong("lowNum");
+            fe.lowDen = r.getLong("lowDen");
+            fe.highNum = r.getLong("highNum");
+            fe.highDen = r.getLong("highDen");
+            fe.treePath = r.getList("treePath", Integer.class);
+            fe.depth = r.getInt("depth");
+
+            return fe;
+        }
+
+        @Override public String toString() {
+            return "FullEntity[depth=" + depth +
+                    ", entity=" + entity +
+                    ", high=" + high +
+                    ", highDen=" + highDen +
+                    ", highNum=" + highNum +
+                    ", low=" + low +
+                    ", lowDen=" + lowDen +
+                    ", lowNum=" + lowNum +
+                    ", treePath=" + treePath +
+                    ']';
         }
     }
 }

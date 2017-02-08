@@ -33,9 +33,19 @@ public class FrontendTest {
     public static WebArchive getDeployment() {
         return Deployments.getFullHawkularInventoryWar();
     }
+//
+//    @Test
+//    public void testTenantAutoCreates(@ArquillianResteasyResource WebTarget webTarget) {
+//        Response response = webTarget.path("/entity/t;tnt").request(MediaType.APPLICATION_JSON).get();
+//        Entity expected = new Entity(CanonicalPath.of().tenant("tnt").get(), null, null);
+//
+//        Entity actual = (Entity) response.getEntity();
+//
+//        Assert.assertEquals(expected, actual);
+//    }
 
     @Test
-    public void testTenantAutoCreates() {
-        //TODO implement
+    public void dummy() {
+        
     }
 }

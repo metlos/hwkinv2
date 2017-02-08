@@ -16,10 +16,11 @@
  */
 package org.hawkular.inventory.rest;
 
+import java.util.EnumSet;
+import java.util.Set;
+
 import javax.inject.Inject;
 import javax.ws.rs.Consumes;
-import javax.ws.rs.DELETE;
-import javax.ws.rs.GET;
 import javax.ws.rs.POST;
 import javax.ws.rs.Path;
 import javax.ws.rs.Produces;
@@ -30,43 +31,37 @@ import javax.ws.rs.core.UriInfo;
 
 import org.hawkular.inventory.annotations.Configured;
 import org.hawkular.inventory.backend.InventoryStorage;
-import org.hawkular.inventory.model.Entity;
+import org.hawkular.inventory.model.SyncRequest;
 import org.hawkular.inventory.paths.CanonicalPath;
+import org.hawkular.inventory.paths.SegmentType;
 
 /**
  * @author Lukas Krejci
  * @since 2.0.0
  */
-@Path("/entity")
+@Path("/sync")
 @Consumes("application/json")
 @Produces("application/json")
-public class EntityEndpoint {
-
-    private static final int PATH_PREFIX_LENGTH = "/entity".length();
+public class SyncEndpoint {
+    private static final Set<SegmentType> SYNCABLE_TYPES =
+            EnumSet.of(SegmentType.f, SegmentType.rt, SegmentType.mt, SegmentType.ot, SegmentType.m, SegmentType.r,
+                    SegmentType.d);
 
     @Inject @Configured
-    private InventoryStorage storage;
-
-    @GET
-    @Path("{path:.+}")
-    public void get(@Suspended AsyncResponse response, @Context UriInfo uriInfo) {
-        CanonicalPath cp = Util.getPath(uriInfo, PATH_PREFIX_LENGTH, 0);
-        storage.findByPath(cp).subscribe(response::resume, response::resume);
-    }
+    private InventoryStorage inventory;
 
     @POST
     @Path("{path:.+}")
-    public void create(@Suspended AsyncResponse response, Entity.Blueprint entity, @Context UriInfo uriInfo) {
-        CanonicalPath cp = Util.getPath(uriInfo, PATH_PREFIX_LENGTH, 0);
-        Entity e = new Entity(cp, entity.getName(), entity.getProperties());
+    public void sync(@Suspended AsyncResponse response, SyncRequest request,
+                         @Context UriInfo uriInfo) throws Exception {
+        CanonicalPath root = Util.getPath(uriInfo, "/sync".length(), 0);
 
-        storage.upsert(e).subscribe(response::resume, response::resume);
+        if (!SYNCABLE_TYPES.contains(root.getSegment().getElementType())) {
+            throw new IllegalArgumentException("Entities of type " + root.getSegment().getElementType().getSimpleName()
+                    + " are not synchronizable.");
+        }
+
+        inventory.sync(request).subscribe(response::resume, response::resume);
     }
 
-    @DELETE
-    @Path("{path:.+}")
-    public void delete(@Suspended AsyncResponse response, @Context UriInfo uriInfo) {
-        CanonicalPath cp = Util.getPath(uriInfo, PATH_PREFIX_LENGTH, 0);
-        storage.delete(cp).subscribe(response::resume, response::resume);
-    }
 }
