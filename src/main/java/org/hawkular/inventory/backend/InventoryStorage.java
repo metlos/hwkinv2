@@ -178,7 +178,7 @@ public class InventoryStorage {
                 .build();
 
         cluster.register(queryLogger);
-        
+
         Session createdSession = null;
         try {
             createdSession = cluster.connect();
@@ -357,7 +357,7 @@ public class InventoryStorage {
         Observable<Void> work = Observable.empty();
         for (Entity child : struct.getChildren(parent)) {
             RelativePath childAsNewParent = parent.modified().extend(child.getPath().getSegment()).get();
-            
+
             Observable<Void> childWork = upsert(child).concatWith(insertRecursively(struct, childAsNewParent));
 
             work = work.mergeWith(childWork);

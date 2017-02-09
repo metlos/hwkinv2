@@ -46,6 +46,5 @@ public class FrontendTest {
 
     @Test
     public void dummy() {
-        
     }
 }
