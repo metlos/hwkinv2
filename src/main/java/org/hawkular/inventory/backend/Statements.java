@@ -63,10 +63,10 @@ final class Statements {
                 " AND entityType = ? AND entityPath = ?");
         this.getAllChildrenPaths = prepare(session,
                 "SELECT entityPath FROM " + TBL_ENTITY_TREE + " WHERE tenantId = ? AND feedId = ? AND low > ?" +
-                        " AND high < ? ALLOW FILTERING");
+                        " AND high <= ? ALLOW FILTERING");
         this.getAllChildren = prepare(session,
                 "SELECT * FROM " + TBL_ENTITY_TREE + " WHERE tenantId = ? AND feedId = ? AND low > ?" +
-                        " AND high < ? ALLOW FILTERING");
+                        " AND high <= ? ALLOW FILTERING");
         this.updateEntityIfExists = prepare(session,
                 "UPDATE " + TBL_ENTITY_TREE + " SET name = ?, properties = ? WHERE tenantId = ? AND feedId = ? " +
                         "AND entityType = ? AND entityPath = ? IF EXISTS");
