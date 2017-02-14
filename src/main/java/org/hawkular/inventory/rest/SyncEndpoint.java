@@ -16,10 +16,10 @@
  */
 package org.hawkular.inventory.rest;
 
-import java.util.EnumSet;
-import java.util.Set;
+import java.io.Reader;
 
 import javax.inject.Inject;
+import javax.servlet.http.HttpServletRequest;
 import javax.ws.rs.Consumes;
 import javax.ws.rs.POST;
 import javax.ws.rs.Path;
@@ -27,41 +27,53 @@ import javax.ws.rs.Produces;
 import javax.ws.rs.container.AsyncResponse;
 import javax.ws.rs.container.Suspended;
 import javax.ws.rs.core.Context;
+import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriInfo;
 
 import org.hawkular.inventory.annotations.Configured;
 import org.hawkular.inventory.backend.InventoryStorage;
+import org.hawkular.inventory.model.Entity;
 import org.hawkular.inventory.model.SyncRequest;
 import org.hawkular.inventory.paths.CanonicalPath;
-import org.hawkular.inventory.paths.SegmentType;
+import org.hawkular.inventory.serialization.InventoryStructureDeserializer;
+import org.jboss.resteasy.annotations.GZIP;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * @author Lukas Krejci
  * @since 2.0.0
  */
+@GZIP
 @Path("/sync")
 @Consumes("application/json")
 @Produces("application/json")
 public class SyncEndpoint {
-    private static final Set<SegmentType> SYNCABLE_TYPES =
-            EnumSet.of(SegmentType.f, SegmentType.rt, SegmentType.mt, SegmentType.ot, SegmentType.m, SegmentType.r,
-                    SegmentType.d);
-
     @Inject @Configured
     private InventoryStorage inventory;
 
+    @Inject
+    private HttpServletRequest request;
+
+    @Inject @Configured
+    private ObjectMapper mapper;
+
     @POST
     @Path("{path:.+}")
-    public void sync(@Suspended AsyncResponse response, SyncRequest request,
+    public void sync(@Suspended AsyncResponse response, Reader input,
                          @Context UriInfo uriInfo) throws Exception {
-        CanonicalPath root = Util.getPath(uriInfo, "/sync".length(), 0);
+        CanonicalPath root = Util.getPath(uriInfo, this.request, "/sync".length(), 0);
 
-        if (!SYNCABLE_TYPES.contains(root.getSegment().getElementType())) {
+        if (!Entity.isSyncable(root.getSegment().getElementType())) {
             throw new IllegalArgumentException("Entities of type " + root.getSegment().getElementType().getSimpleName()
                     + " are not synchronizable.");
         }
 
-        inventory.sync(request).subscribe(response::resume, response::resume);
+        InventoryStructureDeserializer.setDeserializationRootPath(root);
+
+        SyncRequest request = mapper.readValue(input, SyncRequest.class);
+
+        inventory.sync(request).subscribe(Util.emitSingleResult(response, any -> Response.noContent().build()));
     }
 
 }

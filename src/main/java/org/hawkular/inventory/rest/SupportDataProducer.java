@@ -23,7 +23,6 @@ import java.io.Reader;
 import java.net.URL;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Random;
@@ -40,54 +39,55 @@ import org.hawkular.inventory.logging.Log;
  * @author Lukas Krejci
  * @since 2.0.0
  */
-public class InventoryStorageProducer {
+@ApplicationScoped
+public class SupportDataProducer {
     private static final String EXTERNAL_CONF_FILE_PROPERTY_NAME = "hawkular-inventory.conf";
 
     private static Map<String, String> getConfiguration() throws IOException {
-        Properties config = getDefaultConfiguration();
+        Map<String, String> config = getDefaultConfiguration();
 
         Map<String, String> ret = new HashMap<>();
-        ret.put("nodes", getConfigValue(config, "hawkular.inventory.cassandra.nodes",
+        ret.put("nodes", Util.getConfigValue(config, "hawkular.inventory.cassandra.nodes",
                 Arrays.asList("hawkular.inventory.cassandra.nodes", "hawkular.metrics.cassandra.nodes"),
                 Arrays.asList("HAWKULAR_INVENTORY_CASSANDRA_NODES", "CASSANDRA_NODES")));
 
-        ret.put("port", getConfigValue(config, "hawkular.inventory.cassandra.port",
+        ret.put("port", Util.getConfigValue(config, "hawkular.inventory.cassandra.port",
                 Arrays.asList("hawkular.inventory.cassandra.port", "hawkular.metrics.cassandra.port"),
                 Arrays.asList("HAWKULAR_INVENTORY_CASSANDRA_PORT", "CASSANDRA_CQL_PORT")));
 
-        ret.put("use-ssl", getConfigValue(config, "hawkular.inventory.cassandra.use-ssl",
+        ret.put("use-ssl", Util.getConfigValue(config, "hawkular.inventory.cassandra.use-ssl",
                 Arrays.asList("hawkular.inventory.cassandra.use-ssl", "hawkular.metrics.cassandra.use-ssl"),
-                Arrays.asList("HAWKULA_INVENTORY_CASSANDRA_USE_SSL", "CASSANDRA_USESSL")));
+                Arrays.asList("HAWKULAR_INVENTORY_CASSANDRA_USE_SSL", "CASSANDRA_USESSL")));
 
         ret.put("max-connections-per-host",
-                getConfigValue(config, "hawkular.inventory.cassandra.max-connections-per-host",
+                Util.getConfigValue(config, "hawkular.inventory.cassandra.max-connections-per-host",
                         Arrays.asList("hawkular.inventory.cassandra.max-connections-per-host",
                                 "hawkular.metrics.cassandra.max-connections-per-host"),
                         Arrays.asList("HAWKULAR_INVENTORY_CASSANDRA_MAX_CONN_HOST", "CASSANDRA_MAX_CONN_HOST")));
 
         ret.put("max-requests-per-connection",
-                getConfigValue(config, "hawkular.inventory.cassandra.max-requests-per-connection",
+                Util.getConfigValue(config, "hawkular.inventory.cassandra.max-requests-per-connection",
                         Arrays.asList("hawkular.inventory.cassandra.max-requests-per-connection",
                                 "hawkular.metrics.cassandra.max-requests-per-connection"),
                         Arrays.asList("HAWKULAR_INVENTORY_CASSANDRA_MAX_REQUEST_CONN", "CASSANDRA_MAX_REQUEST_CONN")));
 
-        ret.put("request-timeout", getConfigValue(config, "hawkular.inventory.cassandra.request-timeout",
+        ret.put("request-timeout", Util.getConfigValue(config, "hawkular.inventory.cassandra.request-timeout",
                 Arrays.asList("hawkular.inventory.cassandra.request-timeout",
                         "hawkular.metrics.cassandra.request-timeout"),
                 Arrays.asList("HAWKULAR_INVENTORY_CASSANDRA_REQUEST_TIMEOUT", "CASSANDRA_REQUEST_TIMEOUT")));
 
-        ret.put("connection-timeout", getConfigValue(config, "hawkular.inventory.cassandra.connection-timeout",
+        ret.put("connection-timeout", Util.getConfigValue(config, "hawkular.inventory.cassandra.connection-timeout",
                 Arrays.asList("hawkular.inventory.cassandra.connection-timeout",
                         "hawkular.metrics.cassandra.connection-timeout"),
                 Arrays.asList("HAWKULAR_INVENTORY_CASSANDRA_CONNECTION_TIMEOUT", "CASSANDRA_CONNECTION_TIMEOUT")));
 
-        ret.put("refresh-interval", getConfigValue(config, "hawkular.inventory.cassandra.schema.refresh-interval",
+        ret.put("refresh-interval", Util.getConfigValue(config, "hawkular.inventory.cassandra.schema.refresh-interval",
                 Arrays.asList("hawkular.inventory.cassandra.schema.refresh-interval",
                         "hawkular.metrics.cassandra.schema.refresh-interval"),
                 Arrays.asList("HAWKULAR_INVENTORY_CASSANDRA_SCHEMA_REFRESH_INTERVAL",
                         "CASSANDRA_SCHEMA_REFRESH_INTERVAL")));
 
-        ret.put("page-size", getConfigValue(config, "hawkular.inventory.cassandra.page-size",
+        ret.put("page-size", Util.getConfigValue(config, "hawkular.inventory.cassandra.page-size",
                 Arrays.asList("hawkular.inventory.cassandra.page-size",
                         "hawkular.metrics.cassandra.page-size"),
                 Arrays.asList("HAWKULAR_INVENTORY_CASSANDRA_PAGE_SIZE", "PAGE_SIZE")));
@@ -98,7 +98,7 @@ public class InventoryStorageProducer {
         return ret;
     }
 
-    private static Properties getDefaultConfiguration() throws IOException {
+    private static Map<String, String> getDefaultConfiguration() throws IOException {
         URL location = getConfigurationFile();
 
         Map<String, String> definedProperties = new HashMap<>();
@@ -110,27 +110,14 @@ public class InventoryStorageProducer {
                 definedProperties)) {
             Properties ps = new Properties();
             ps.load(rdr);
-            return ps;
-        }
-    }
 
-    private static String getConfigValue(Properties defaultProps, String propName, List<String> systemProps,
-                                         List<String> envVars) {
-        for (String sp : systemProps) {
-            String val = System.getProperty(sp);
-            if (val != null) {
-                return val;
+            Map<String, String> ret = new HashMap<>();
+            for (String key : ps.stringPropertyNames()) {
+                ret.put(key, ps.getProperty(key));
             }
-        }
 
-        for (String ev : envVars) {
-            String val = System.getenv(ev);
-            if (val != null) {
-                return val;
-            }
+            return ret;
         }
-
-        return defaultProps.getProperty(propName);
     }
 
     private static URL getConfigurationFile() throws IOException {
@@ -148,8 +135,13 @@ public class InventoryStorageProducer {
         }
 
         return confFile == null
-                ? InventoryStorageProducer.class.getClassLoader().getResource("/hawkular-inventory.properties")
+                ? SupportDataProducer.class.getClassLoader().getResource("/hawkular-inventory.properties")
                 : confFile.toURI().toURL();
+    }
+
+    @Produces @ApplicationScoped @Configured
+    public Map<String, String> createConfiguration() throws IOException {
+        return getDefaultConfiguration();
     }
 
     @Produces @ApplicationScoped @Configured

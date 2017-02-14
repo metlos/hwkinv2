@@ -206,7 +206,7 @@ public class InventoryStorage {
         });
     }
 
-    public Observable<Void> upsert(Entity entity) {
+    public Observable<Void> upsert(Entity entity) throws EntityNotFoundException {
         return _upsert(entity, false).map(e -> null);
     }
 
@@ -287,7 +287,7 @@ public class InventoryStorage {
                                                 + ", feedId: " + feedId + ", entityType: " + entityType
                                                 + ", entityPath: " + entityPath + ", fe: " + fe))
                                         .map(any -> fe);
-                            }).switchIfEmpty(Observable.error(new IllegalArgumentException("Could not create "
+                            }).switchIfEmpty(Observable.error(new EntityNotFoundException("Could not create "
                                     + entity.getPath() + ", because the parent (" + parentPath + ") was not found."
                                     + " (Executed findByPath with args: tenantId: " + tenantId + ", feedId: "
                                     + parentFeedId + ", entityType: " + parentType + ", entityPath: "
@@ -317,13 +317,15 @@ public class InventoryStorage {
                     Observable<Void> chain = Observable.empty();
                     for (String childPath : childPaths) {
                         String childType = CanonicalPath.fromString(childPath).getSegment().getElementType().toString();
-                        chain = chain.mergeWith(statements.deleteEntity(tenantId, feedId, childType, childPath));
+                        chain = chain.mergeWith(statements.deleteEntity(tenantId, feedId, childType, childPath)
+                                .doOnNext(any -> childrenCountCache.decrementAndGet(cp)));
                     }
 
                     //XXX we're issuing a delete statement for each child here... maybe it'd be better to use IN clause
                     //and do one big statement for all children?
                     return chain;
-                }).toList().flatMap(allDone -> statements.deleteEntity(tenantId, feedId, entityType, entityPath));
+                }).toList().flatMap(allDone -> statements.deleteEntity(tenantId, feedId, entityType, entityPath)
+                        .doOnNext(any -> childrenCountCache.decrementAndGet(cp.up())));
     }
 
     public Observable<Void> sync(SyncRequest syncRequest) {
@@ -342,14 +344,16 @@ public class InventoryStorage {
                             String childType = cp.getSegment().getElementType().toString();
                             String childPath = cp.toString();
                             Log.LOG.warn("IN SYNC: Deleting " + childPath + ", because it's not in the sync request.");
-                            return statements.deleteEntity(tenantId, feedId, childType, childPath);
+                            return statements.deleteEntity(tenantId, feedId, childType, childPath)
+                                    .doOnNext(any -> childrenCountCache.decrementAndGet(cp.up()));
                         } else {
                             return Observable.empty();
                         }
                     });
 
+            //concat the inserts after the deletes so that the child counts don't get mixed...
             return deleteWork
-                    .mergeWith(insertRecursively(syncRequest.getInventoryStructure(), RelativePath.empty().get()));
+                    .concatWith(insertRecursively(syncRequest.getInventoryStructure(), RelativePath.empty().get()));
         });
     }
 

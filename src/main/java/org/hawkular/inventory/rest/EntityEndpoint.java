@@ -16,7 +16,12 @@
  */
 package org.hawkular.inventory.rest;
 
+import static org.hawkular.inventory.rest.Util.emitSingleResult;
+
+import java.net.URI;
+
 import javax.inject.Inject;
+import javax.servlet.http.HttpServletRequest;
 import javax.ws.rs.Consumes;
 import javax.ws.rs.DELETE;
 import javax.ws.rs.GET;
@@ -26,17 +31,20 @@ import javax.ws.rs.Produces;
 import javax.ws.rs.container.AsyncResponse;
 import javax.ws.rs.container.Suspended;
 import javax.ws.rs.core.Context;
+import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriInfo;
 
 import org.hawkular.inventory.annotations.Configured;
 import org.hawkular.inventory.backend.InventoryStorage;
 import org.hawkular.inventory.model.Entity;
 import org.hawkular.inventory.paths.CanonicalPath;
+import org.jboss.resteasy.annotations.GZIP;
 
 /**
  * @author Lukas Krejci
  * @since 2.0.0
  */
+@GZIP
 @Path("/entity")
 @Consumes("application/json")
 @Produces("application/json")
@@ -47,26 +55,32 @@ public class EntityEndpoint {
     @Inject @Configured
     private InventoryStorage storage;
 
+    @Inject
+    private HttpServletRequest request;
+
     @GET
     @Path("{path:.+}")
     public void get(@Suspended AsyncResponse response, @Context UriInfo uriInfo) {
-        CanonicalPath cp = Util.getPath(uriInfo, PATH_PREFIX_LENGTH, 0);
-        storage.findByPath(cp).subscribe(response::resume, response::resume);
+        CanonicalPath cp = Util.getPath(uriInfo, request, PATH_PREFIX_LENGTH, 0);
+        storage.findByPath(cp).subscribe(emitSingleResult(response, e -> e == null
+                ? Response.status(Response.Status.NOT_FOUND).build()
+                : Response.ok(e).build()));
     }
 
     @POST
     @Path("{path:.+}")
     public void create(@Suspended AsyncResponse response, Entity.Blueprint entity, @Context UriInfo uriInfo) {
-        CanonicalPath cp = Util.getPath(uriInfo, PATH_PREFIX_LENGTH, 0);
+        CanonicalPath cp = Util.getPath(uriInfo, request, PATH_PREFIX_LENGTH, 0);
         Entity e = new Entity(cp, entity.getName(), entity.getProperties());
 
-        storage.upsert(e).subscribe(response::resume, response::resume);
+        storage.upsert(e).subscribe(emitSingleResult(response,
+                x -> Response.created(URI.create(e.getPath().toString())).build()));
     }
 
     @DELETE
     @Path("{path:.+}")
     public void delete(@Suspended AsyncResponse response, @Context UriInfo uriInfo) {
-        CanonicalPath cp = Util.getPath(uriInfo, PATH_PREFIX_LENGTH, 0);
-        storage.delete(cp).subscribe(response::resume, response::resume);
+        CanonicalPath cp = Util.getPath(uriInfo, request, PATH_PREFIX_LENGTH, 0);
+        storage.delete(cp).subscribe(emitSingleResult(response, x -> Response.noContent().build()));
     }
 }

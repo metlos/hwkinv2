@@ -59,8 +59,18 @@ final class ChildrenCountCache {
         }
     }
 
+    public int decrementAndGet(CanonicalPath parentPath) {
+        synchronized (childCounts) {
+            return decrementAndGetNonSynced(parentPath);
+        }
+    }
+
     private int incrementAndGetNonSynced(CanonicalPath parentPath) {
-        return childCounts.merge(parentPath, 1, (old, one) -> old + one);
+        return childCounts.merge(parentPath, 1, (old, any) -> old + 1);
+    }
+
+    private int decrementAndGetNonSynced(CanonicalPath parentPath) {
+        return childCounts.merge(parentPath, 0, (old, any) -> old > 0 ? old - 1 : 0);
     }
 
     private void initParents(CanonicalPath entityPath) {

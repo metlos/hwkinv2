@@ -17,19 +17,30 @@
 package org.hawkular.inventory.model;
 
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 import org.hawkular.inventory.paths.CanonicalPath;
+import org.hawkular.inventory.paths.SegmentType;
 
 /**
  * @author Lukas Krejci
  * @since 2.0.0
  */
 public final class Entity {
+    public static final Set<SegmentType> SYNCABLE_TYPES =
+            Collections.unmodifiableSet(EnumSet.of(SegmentType.f, SegmentType.rt, SegmentType.mt, SegmentType.ot,
+                    SegmentType.m, SegmentType.r, SegmentType.d));
+
     private final CanonicalPath path;
     private final String name;
     private final Map<String, String> properties;
+
+    public static boolean isSyncable(SegmentType entityType) {
+        return SYNCABLE_TYPES.contains(entityType);
+    }
 
     public static Builder at(CanonicalPath cp) {
         return new Builder(cp);
@@ -83,6 +94,11 @@ public final class Entity {
         private final String name;
         private final Map<String, String> properties;
 
+        private Blueprint() {
+            name = null;
+            properties = null;
+        }
+
         public Blueprint(String name, Map<String, String> properties) {
             this.name = name;
             this.properties = Collections.unmodifiableMap(properties);
@@ -93,7 +109,7 @@ public final class Entity {
         }
 
         public Map<String, String> getProperties() {
-            return properties;
+            return properties == null ? Collections.emptyMap() : properties;
         }
     }
 

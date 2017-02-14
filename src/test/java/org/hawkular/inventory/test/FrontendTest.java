@@ -16,9 +16,18 @@
  */
 package org.hawkular.inventory.test;
 
+import javax.ws.rs.client.WebTarget;
+import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Response;
+
+import org.hawkular.inventory.model.Entity;
+import org.hawkular.inventory.paths.CanonicalPath;
 import org.jboss.arquillian.container.test.api.Deployment;
+import org.jboss.arquillian.container.test.api.RunAsClient;
+import org.jboss.arquillian.extension.rest.client.ArquillianResteasyResource;
 import org.jboss.arquillian.junit.Arquillian;
 import org.jboss.shrinkwrap.api.spec.WebArchive;
+import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -29,22 +38,19 @@ import org.junit.runner.RunWith;
 @RunWith(Arquillian.class)
 public class FrontendTest {
 
-    @Deployment(testable = false)
+    @Deployment
     public static WebArchive getDeployment() {
         return Deployments.getFullHawkularInventoryWar();
     }
-//
-//    @Test
-//    public void testTenantAutoCreates(@ArquillianResteasyResource WebTarget webTarget) {
-//        Response response = webTarget.path("/entity/t;tnt").request(MediaType.APPLICATION_JSON).get();
-//        Entity expected = new Entity(CanonicalPath.of().tenant("tnt").get(), null, null);
-//
-//        Entity actual = (Entity) response.getEntity();
-//
-//        Assert.assertEquals(expected, actual);
-//    }
 
     @Test
-    public void dummy() {
+    @RunAsClient
+    public void testTenantAutoCreates(@ArquillianResteasyResource WebTarget webTarget) {
+        Response response = webTarget.path("/entity/t;tnt").request(MediaType.APPLICATION_JSON).get();
+        Entity expected = new Entity(CanonicalPath.of().tenant("tnt").get(), null, null);
+
+        Entity actual = (Entity) response.getEntity();
+
+        Assert.assertEquals(expected, actual);
     }
 }

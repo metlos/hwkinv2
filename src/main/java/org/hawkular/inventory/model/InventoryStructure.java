@@ -66,7 +66,7 @@ public final class InventoryStructure implements Serializable {
         return entities;
     }
 
-    private static class AbstractBuilder<This extends AbstractBuilder<?>> {
+    public static class AbstractBuilder<This extends AbstractBuilder<?>> {
         final CanonicalPath myPath;
         final Map<CanonicalPath, Set<Entity>> children;
         final Map<CanonicalPath, Entity> entities;
