@@ -225,7 +225,7 @@ public class InventoryStorage {
         return statements.updateIfExists(tenantId, feedId, entityType, entityPath, name, properties).flatMap(update -> {
             boolean applied = update.getBool(0);
             if (applied) {
-                Log.LOG.warn("IN UPSERT: Found entity " + entityPath + " already exists.");
+                Log.LOG.trace("IN UPSERT: Found entity " + entityPath + " already exists.");
 
                 if (!needFullEntity) {
                     return Observable.just(null);
@@ -234,7 +234,7 @@ public class InventoryStorage {
                 //k, the entity already exists and we just updated what was possible...
                 return statements.findByPath(tenantId, feedId, entityType, entityPath).map(FullEntity::fromRow);
             } else {
-                Log.LOG.warn("IN UPSERT: Entity " + entityPath + " doesn't exist. Creating it.");
+                Log.LOG.trace("IN UPSERT: Entity " + entityPath + " doesn't exist. Creating it.");
                 //k, need to create it
                 if (!parentPath.isDefined()) {
                     FullEntity fe = new FullEntity();
@@ -250,7 +250,7 @@ public class InventoryStorage {
 
                     return statements.insertEntity(tenantId, feedId, entityType, entityPath, name, properties,
                             fe.low, fe.high, fe.lowNum, fe.lowDen, fe.highNum, fe.highDen, fe.treePath, fe.depth)
-                            .doOnNext(r -> Log.LOG.warn("IN UPSERT: Created tenant " + fe.entity.getPath()))
+                            .doOnNext(r -> Log.LOG.trace("IN UPSERT: Created tenant " + fe.entity.getPath()))
                             .map(any -> fe);
                 } else {
                     String parentType = parentPath.isDefined()
@@ -283,7 +283,7 @@ public class InventoryStorage {
                                 return statements.insertEntity(tenantId, feedId, entityType, entityPath, name,
                                         properties, fe.low, fe.high, fe.lowNum, fe.lowDen, fe.highNum, fe.highDen,
                                         fe.treePath, fe.depth)
-                                        .doOnNext(r -> Log.LOG.warn("IN UPSERT: Created child tenantId: " + tenantId
+                                        .doOnNext(r -> Log.LOG.trace("IN UPSERT: Created child tenantId: " + tenantId
                                                 + ", feedId: " + feedId + ", entityType: " + entityType
                                                 + ", entityPath: " + entityPath + ", fe: " + fe))
                                         .map(any -> fe);
@@ -343,7 +343,7 @@ public class InventoryStorage {
                         if (!entities.containsKey(cp)) {
                             String childType = cp.getSegment().getElementType().toString();
                             String childPath = cp.toString();
-                            Log.LOG.warn("IN SYNC: Deleting " + childPath + ", because it's not in the sync request.");
+                            Log.LOG.trace("IN SYNC: Deleting " + childPath + ", because it's not in the sync request.");
                             return statements.deleteEntity(tenantId, feedId, childType, childPath)
                                     .doOnNext(any -> childrenCountCache.decrementAndGet(cp.up()));
                         } else {
