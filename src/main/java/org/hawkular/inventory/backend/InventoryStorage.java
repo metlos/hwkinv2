@@ -27,6 +27,7 @@ import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.jar.Manifest;
 
 import javax.net.ssl.SSLContext;
@@ -39,6 +40,7 @@ import org.hawkular.inventory.model.InventoryStructure;
 import org.hawkular.inventory.model.SyncRequest;
 import org.hawkular.inventory.paths.CanonicalPath;
 import org.hawkular.inventory.paths.RelativePath;
+import org.hawkular.inventory.paths.SegmentType;
 import org.hawkular.rx.cassandra.driver.RxSession;
 import org.hawkular.rx.cassandra.driver.RxSessionImpl;
 
@@ -328,19 +330,22 @@ public class InventoryStorage {
                         .doOnNext(any -> childrenCountCache.decrementAndGet(cp.up())));
     }
 
-    public Observable<Void> sync(SyncRequest syncRequest) {
+    public Observable<Void> sync(CanonicalPath rootPath, SyncRequest syncRequest) {
         //first delete everything under the root
-        CanonicalPath rootPath = syncRequest.getInventoryStructure().getRoot().getPath();
         String tenantId = rootPath.ids().getTenantId();
         String feedId = rootPath.ids().getFeedId();
 
-        Map<CanonicalPath, Entity> entities = syncRequest.getInventoryStructure().getAllEntities();
+        Map<RelativePath, Entity.Blueprint> entities = syncRequest.getInventoryStructure().getAllEntities();
 
-        return _upsert(syncRequest.getInventoryStructure().getRoot(), true).flatMap(fe -> {
+        Entity.Blueprint rootBlueprint = syncRequest.getInventoryStructure().getRoot();
+
+        Entity rootEntity = new Entity(rootPath, rootBlueprint.getName(), rootBlueprint.getProperties());
+
+        return _upsert(rootEntity, true).flatMap(fe -> {
             Observable<Void> deleteWork = statements.getAllChildrenPaths(tenantId, feedId, fe.low, fe.high)
                     .map(r -> CanonicalPath.fromString(r.getString(0)))
                     .flatMap(cp -> {
-                        if (!entities.containsKey(cp)) {
+                        if (!entities.containsKey(cp.relativeTo(rootPath))) {
                             String childType = cp.getSegment().getElementType().toString();
                             String childPath = cp.toString();
                             Log.LOG.trace("IN SYNC: Deleting " + childPath + ", because it's not in the sync request.");
@@ -353,18 +358,27 @@ public class InventoryStorage {
 
             //concat the inserts after the deletes so that the child counts don't get mixed...
             return deleteWork
-                    .concatWith(insertRecursively(syncRequest.getInventoryStructure(), RelativePath.empty().get()));
+                    .concatWith(insertRecursively(syncRequest.getInventoryStructure(), rootPath,
+                            RelativePath.empty().get()));
         });
     }
 
-    private Observable<Void> insertRecursively(InventoryStructure struct, RelativePath parent) {
+    private Observable<Void> insertRecursively(InventoryStructure struct, CanonicalPath root, RelativePath parent) {
         Observable<Void> work = Observable.empty();
-        for (Entity child : struct.getChildren(parent)) {
-            RelativePath childAsNewParent = parent.modified().extend(child.getPath().getSegment()).get();
+        for (Map.Entry<SegmentType, Set<Entity.Blueprint>> e : struct.getAllChildren(parent).entrySet()) {
+            SegmentType type = e.getKey();
+            Set<Entity.Blueprint> children = e.getValue();
 
-            Observable<Void> childWork = upsert(child).concatWith(insertRecursively(struct, childAsNewParent));
+            for (Entity.Blueprint child : children) {
+                RelativePath childAsNewParent = parent.modified().extend(type, child.getId()).get();
 
-            work = work.mergeWith(childWork);
+                Entity childEntity = new Entity(childAsNewParent.applyTo(root), child.getName(), child.getProperties());
+
+                Observable<Void> childWork = upsert(childEntity)
+                        .concatWith(insertRecursively(struct, root, childAsNewParent));
+
+                work = work.mergeWith(childWork);
+            }
         }
 
         return work;

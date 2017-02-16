@@ -17,13 +17,19 @@
 package org.hawkular.inventory.test;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
+import org.hawkular.inventory.backend.FareySequence;
 import org.hawkular.inventory.model.Entity;
 import org.hawkular.inventory.model.InventoryStructure;
+import org.hawkular.inventory.paths.CanonicalPath;
 import org.hawkular.inventory.paths.RelativePath;
+import org.hawkular.inventory.paths.SegmentType;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 /**
@@ -32,6 +38,7 @@ import org.junit.Test;
  */
 public class InventoryStructureTest {
 
+    private CanonicalPath tp = CanonicalPath.of().tenant("t").get();
     private Entity fd = Entity.at("/t;t/f;fd").build();
     private Entity r1 = Entity.at("/t;t/f;fd/r;r1").build();
     private Entity m1 = Entity.at("/t;t/f;fd/r;r1/m;m1").build();
@@ -55,43 +62,73 @@ public class InventoryStructureTest {
 
     @Test
     public void testGetByPath() {
-        Assert.assertEquals(fd, struct.getRoot());
-        Assert.assertEquals(fd, struct.get(RelativePath.empty().get()));
-        Assert.assertEquals(r1, struct.get(RelativePath.to().resource("r1").get()));
-        Assert.assertEquals(m1, struct.get(RelativePath.to().resource("r1").metric("m1").get()));
-        Assert.assertEquals(r2, struct.get(RelativePath.to().resource("r2").get()));
-        Assert.assertEquals(m2, struct.get(RelativePath.to().resource("r2").metric("m2").get()));
-        Assert.assertEquals(m3, struct.get(RelativePath.to().resource("r2").metric("m3").get()));
-        Assert.assertEquals(rt1, struct.get(RelativePath.to().resourceType("rt1").get()));
-        Assert.assertEquals(mt1, struct.get(RelativePath.to().metricType("mt1").get()));
+        Assert.assertEquals(fd, struct.getRoot().asEntity(tp, SegmentType.f));
+        Assert.assertEquals(fd, struct.get(RelativePath.empty().get()).asEntity(tp, SegmentType.f));
+        Assert.assertEquals(r1,
+                struct.get(RelativePath.to().resource("r1").get()).asEntity(fd.getPath(), SegmentType.r));
+        Assert.assertEquals(m1,
+                struct.get(RelativePath.to().resource("r1").metric("m1").get()).asEntity(r1.getPath(), SegmentType.m));
+        Assert.assertEquals(r2,
+                struct.get(RelativePath.to().resource("r2").get()).asEntity(fd.getPath(), SegmentType.r));
+        Assert.assertEquals(m2,
+                struct.get(RelativePath.to().resource("r2").metric("m2").get()).asEntity(r2.getPath(), SegmentType.m));
+        Assert.assertEquals(m3,
+                struct.get(RelativePath.to().resource("r2").metric("m3").get()).asEntity(r2.getPath(), SegmentType.m));
+        Assert.assertEquals(rt1,
+                struct.get(RelativePath.to().resourceType("rt1").get()).asEntity(fd.getPath(), SegmentType.rt));
+        Assert.assertEquals(mt1,
+                struct.get(RelativePath.to().metricType("mt1").get()).asEntity(fd.getPath(), SegmentType.mt));
     }
 
     @Test
     public void testAllEntitiesMap() {
         Assert.assertEquals(8, struct.getAllEntities().size());
-        Assert.assertEquals(fd, struct.getAllEntities().get(fd.getPath()));
-        Assert.assertEquals(r1, struct.getAllEntities().get(r1.getPath()));
-        Assert.assertEquals(m1, struct.getAllEntities().get(m1.getPath()));
-        Assert.assertEquals(r2, struct.getAllEntities().get(r2.getPath()));
-        Assert.assertEquals(m2, struct.getAllEntities().get(m2.getPath()));
-        Assert.assertEquals(m3, struct.getAllEntities().get(m3.getPath()));
-        Assert.assertEquals(rt1, struct.getAllEntities().get(rt1.getPath()));
-        Assert.assertEquals(mt1, struct.getAllEntities().get(mt1.getPath()));
+        Assert.assertEquals(fd.asBlueprint(), struct.getAllEntities().get(fd.getPath().relativeTo(fd.getPath())));
+        Assert.assertEquals(r1.asBlueprint(), struct.getAllEntities().get(r1.getPath().relativeTo(fd.getPath())));
+        Assert.assertEquals(m1.asBlueprint(), struct.getAllEntities().get(m1.getPath().relativeTo(fd.getPath())));
+        Assert.assertEquals(r2.asBlueprint(), struct.getAllEntities().get(r2.getPath().relativeTo(fd.getPath())));
+        Assert.assertEquals(m2.asBlueprint(), struct.getAllEntities().get(m2.getPath().relativeTo(fd.getPath())));
+        Assert.assertEquals(m3.asBlueprint(), struct.getAllEntities().get(m3.getPath().relativeTo(fd.getPath())));
+        Assert.assertEquals(rt1.asBlueprint(), struct.getAllEntities().get(rt1.getPath().relativeTo(fd.getPath())));
+        Assert.assertEquals(mt1.asBlueprint(), struct.getAllEntities().get(mt1.getPath().relativeTo(fd.getPath())));
     }
 
     @Test
     public void testGetChildren() {
-        Assert.assertEquals(setOf(r1, r2, rt1, mt1), struct.getChildren(RelativePath.empty().get()));
-        Assert.assertEquals(setOf(m1), struct.getChildren(RelativePath.to().resource("r1").get()));
-        Assert.assertEquals(setOf(), struct.getChildren(RelativePath.to().resource("r1").metric("m1").get()));
-        Assert.assertEquals(setOf(m2, m3), struct.getChildren(RelativePath.to().resource("r2").get()));
-        Assert.assertEquals(setOf(), struct.getChildren(RelativePath.to().resource("r2").metric("m2").get()));
-        Assert.assertEquals(setOf(), struct.getChildren(RelativePath.to().resource("r2").metric("m3").get()));
-        Assert.assertEquals(setOf(), struct.getChildren(RelativePath.to().resourceType("rt1").get()));
-        Assert.assertEquals(setOf(), struct.getChildren(RelativePath.to().metricType("mt1").get()));
+        Assert.assertEquals(setOf(r1.asBlueprint(), r2.asBlueprint()),
+                struct.getChildren(RelativePath.empty().get(), SegmentType.r));
+        Assert.assertEquals(setOf(rt1.asBlueprint()),
+                struct.getChildren(RelativePath.empty().get(), SegmentType.rt));
+        Assert.assertEquals(setOf(mt1.asBlueprint()),
+                struct.getChildren(RelativePath.empty().get(), SegmentType.mt));
+        Assert.assertEquals(setOf(m1.asBlueprint()),
+                struct.getChildren(RelativePath.to().resource("r1").get(), SegmentType.m));
+        Assert.assertEquals(Collections.emptyMap(),
+                struct.getAllChildren(RelativePath.to().resource("r1").metric("m1").get()));
+        Assert.assertEquals(setOf(m2.asBlueprint(), m3.asBlueprint()),
+                struct.getChildren(RelativePath.to().resource("r2").get(), SegmentType.m));
+        Assert.assertEquals(Collections.emptyMap(),
+                struct.getAllChildren(RelativePath.to().resource("r2").metric("m2").get()));
+        Assert.assertEquals(Collections.emptyMap(),
+                struct.getAllChildren(RelativePath.to().resource("r2").metric("m3").get()));
+        Assert.assertEquals(Collections.emptyMap(),
+                struct.getAllChildren(RelativePath.to().resourceType("rt1").get()));
+        Assert.assertEquals(Collections.emptyMap(),
+                struct.getAllChildren(RelativePath.to().metricType("mt1").get()));
     }
 
-    private Set<Entity> setOf(Entity... entities) {
+    @Test
+    @Ignore
+    public void testMaxDepth() {
+        List<Integer> path = Arrays.asList(1, 500_000, 100, 100, 100, 100, 100);
+
+        FareySequence.Interval interval = FareySequence.intervalForPath(path);
+        System.out.println(interval);
+        System.out.println(interval.getLow().toDecimal() + " - " + interval.getHigh().toDecimal());
+        System.out.println(interval.getLow().toDecimal().equals(interval.getHigh().toDecimal()));
+    }
+
+    private <T> Set<T> setOf(T... entities) {
         return new HashSet<>(Arrays.asList(entities));
     }
 }

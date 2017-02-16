@@ -26,6 +26,7 @@ import javax.ws.rs.Consumes;
 import javax.ws.rs.DELETE;
 import javax.ws.rs.GET;
 import javax.ws.rs.POST;
+import javax.ws.rs.PUT;
 import javax.ws.rs.Path;
 import javax.ws.rs.Produces;
 import javax.ws.rs.container.AsyncResponse;
@@ -38,6 +39,7 @@ import org.hawkular.inventory.annotations.Configured;
 import org.hawkular.inventory.backend.InventoryStorage;
 import org.hawkular.inventory.model.Entity;
 import org.hawkular.inventory.paths.CanonicalPath;
+import org.hawkular.inventory.paths.SegmentType;
 import org.jboss.resteasy.annotations.GZIP;
 
 /**
@@ -70,11 +72,54 @@ public class EntityEndpoint {
     @POST
     @Path("{path:.+}")
     public void create(@Suspended AsyncResponse response, Entity.Blueprint entity, @Context UriInfo uriInfo) {
-        CanonicalPath cp = Util.getPath(uriInfo, request, PATH_PREFIX_LENGTH, 0);
+        String path = uriInfo.getPath(false);
+        int lastSlash = path.lastIndexOf(CanonicalPath.PATH_DELIM);
+        if (lastSlash <= 0) {
+            lastSlash = 0;
+        }
+
+        int lastSemicolon = path.lastIndexOf(CanonicalPath.TYPE_DELIM);
+        if (lastSlash < lastSemicolon) {
+            lastSlash = 0;
+        } else if (lastSlash > 0){
+            lastSlash = path.length() - lastSlash - 1;
+        }
+
+        CanonicalPath cp = Util.getPath(uriInfo, request, PATH_PREFIX_LENGTH, lastSlash);
+        if (lastSlash > 0) {
+            String suffix = path.substring(path.length() - lastSlash);
+            int typeDelimIdx = suffix.indexOf(CanonicalPath.TYPE_DELIM);
+            if (typeDelimIdx > 0) {
+                //we got the full path in the URI... just check that the ID in the entity is the same as in the path
+                String idInPath = suffix.substring(typeDelimIdx + 1);
+                if (entity.getId() != null && !idInPath.equals(entity.getId())) {
+                    throw new IllegalArgumentException(
+                            "The entity ID in the payload is different from the one in the path.");
+                }
+            } else {
+                if (entity.getId() == null) {
+                    throw new IllegalArgumentException("Entity ID not supplied in the payload.");
+                }
+                SegmentType type = Util.getSegmentTypeFromSimpleName(suffix);
+                cp = cp.modified().extend(type, entity.getId()).get();
+            }
+        }
+
         Entity e = new Entity(cp, entity.getName(), entity.getProperties());
 
-        storage.upsert(e).subscribe(emitSingleResult(response,
-                x -> Response.created(URI.create(e.getPath().toString())).build()));
+        //need to create this before the async call, because it would fail if invoked asyncly
+        String tenantlessPath = cp.toString().substring(Util.getTenantId(request).length() + 3); //3 = "/t;".length()
+        URI uri = uriInfo.getBaseUri().resolve("entity" + tenantlessPath);
+
+        storage.upsert(e).subscribe(emitSingleResult(response, x -> Response.created(uri).build()));
+    }
+
+    @PUT
+    @Path("{path:.+}")
+    public void update(@Suspended AsyncResponse response, Entity.Blueprint entity, @Context UriInfo uriInfo) {
+        CanonicalPath cp = Util.getPath(uriInfo, request, PATH_PREFIX_LENGTH, 0);
+        Entity e = new Entity(cp, entity.getName(), entity.getProperties());
+        storage.upsert(e).subscribe(emitSingleResult(response, x -> Response.noContent().build()));
     }
 
     @DELETE

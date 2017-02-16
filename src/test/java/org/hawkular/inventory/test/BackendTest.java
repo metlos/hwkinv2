@@ -99,7 +99,7 @@ public class BackendTest {
 
         CountDownLatch latch = new CountDownLatch(1);
 
-        storage.sync(SyncRequest.syncEverything(struct)).subscribe(onceFinished(latch::countDown));
+        storage.sync(fd.getPath(), SyncRequest.syncEverything(struct)).subscribe(onceFinished(latch::countDown));
 
         latch.await();
 
@@ -136,7 +136,7 @@ public class BackendTest {
 
         CountDownLatch latch = new CountDownLatch(1);
 
-        storage.sync(SyncRequest.syncEverything(struct)).subscribe(onceFinished(latch::countDown));
+        storage.sync(fd.getPath(), SyncRequest.syncEverything(struct)).subscribe(onceFinished(latch::countDown));
 
         latch.await();
 
@@ -162,8 +162,9 @@ public class BackendTest {
         int maxThirdLevelPerParent = 10;
 
         for (int attempt = 0; attempt < attempts; ++attempt) {
+            Entity root = Entity.at("/t;t/f;fd").build();
             int topLevels = rand.nextInt(maxTopLevel);
-            InventoryStructure.Builder bld = InventoryStructure.of(Entity.at("/t;t/f;fd").build());
+            InventoryStructure.Builder bld = InventoryStructure.of(root);
             for (int l1 = 0; l1 < topLevels; ++l1) {
                 InventoryStructure.ChildBuilder<?> cb = bld.startChild(Entity.at("/t;t/f;fd/r;" + l1).build());
                 int secondLevels = rand.nextInt(maxSecondLevelPerParent);
@@ -186,7 +187,7 @@ public class BackendTest {
 
             CountDownLatch latch = new CountDownLatch(1);
 
-            storage.sync(SyncRequest.syncEverything(struct)).subscribe(onceFinished(latch::countDown));
+            storage.sync(root.getPath(), SyncRequest.syncEverything(struct)).subscribe(onceFinished(latch::countDown));
 
             latch.await();
         }

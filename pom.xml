@@ -202,7 +202,14 @@
 
     <dependency>
       <groupId>org.jboss.arquillian.extension</groupId>
-      <artifactId>arquillian-rest-client-impl-jersey</artifactId>
+      <artifactId>arquillian-rest-client-api</artifactId>
+      <version>1.0.0.Alpha4</version>
+      <scope>test</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.jboss.arquillian.extension</groupId>
+      <artifactId>arquillian-rest-client-impl-3x</artifactId>
       <version>1.0.0.Alpha4</version>
       <scope>test</scope>
     </dependency>
@@ -210,6 +217,12 @@
     <dependency>
       <groupId>org.jboss.shrinkwrap.resolver</groupId>
       <artifactId>shrinkwrap-resolver-impl-maven</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.jboss.resteasy</groupId>
+      <artifactId>resteasy-jackson-provider</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>

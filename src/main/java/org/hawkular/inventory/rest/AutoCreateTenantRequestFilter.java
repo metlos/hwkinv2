@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -28,6 +29,7 @@ import javax.inject.Inject;
 import javax.ws.rs.container.ContainerRequestContext;
 import javax.ws.rs.container.ContainerRequestFilter;
 import javax.ws.rs.container.PreMatching;
+import javax.ws.rs.core.Response;
 import javax.ws.rs.ext.Provider;
 
 import org.hawkular.inventory.annotations.Configured;
@@ -35,6 +37,8 @@ import org.hawkular.inventory.backend.InventoryStorage;
 import org.hawkular.inventory.logging.Log;
 import org.hawkular.inventory.model.Entity;
 import org.hawkular.inventory.paths.CanonicalPath;
+
+import rx.Subscriber;
 
 /**
  * @author Lukas Krejci
@@ -64,8 +68,44 @@ public class AutoCreateTenantRequestFilter implements ContainerRequestFilter {
         if (tenantId != null) {
             if (!existingTenantIds.contains(tenantId)) {
                 Log.LOG.tracef("Tenant [%s] needs to be created", tenantId);
-                storage.upsert(Entity.at(CanonicalPath.of().tenant(tenantId).get()).build()).subscribe();
-                existingTenantIds.add(tenantId);
+
+                //we stop the request processing until the tenant is successfully created...
+                CountDownLatch waiter = new CountDownLatch(1);
+                Throwable[] failure = new Throwable[1];
+                storage.upsert(Entity.at(CanonicalPath.of().tenant(tenantId).get()).build())
+                        .subscribe(new Subscriber<Void>() {
+                            @Override
+                            public void onCompleted() {
+                                waiter.countDown();
+                            }
+
+                            @Override
+                            public void onError(Throwable t) {
+                                failure[0] = t;
+                                waiter.countDown();
+                                Log.LOG.warnFailedToAutocreateTenant(tenantId, t);
+                            }
+
+                            @Override
+                            public void onNext(Void ignored) {
+                                //do nothing
+                            }
+                        });
+
+                try {
+                    waiter.await();
+                } catch (InterruptedException e) {
+                    //reset the flag, but continue with the request processing. The container should react accordingly.
+                    Thread.currentThread().interrupt();
+                }
+
+                if (failure[0] != null) {
+                    requestContext.abortWith(
+                            Response.serverError().entity("Failed to auto-create tenant '" + tenantId
+                                    + "'. Error message: " + failure[0].getMessage()).build());
+                } else {
+                    existingTenantIds.add(tenantId);
+                }
             } else {
                 Log.LOG.tracef("Tenant [%s] exists already", tenantId);
             }

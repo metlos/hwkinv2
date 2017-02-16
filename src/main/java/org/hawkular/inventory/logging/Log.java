@@ -67,4 +67,8 @@ public interface Log extends BasicLogger {
     @LogMessage(level = Logger.Level.INFO)
     @Message(id = 8, value = "Could not contact the configured Cassandra instance. Will retry in %dms. The error message was: %s")
     void infoCouldNotConnect(int nextAttempt, String errorMessage);
+
+    @LogMessage(level = Logger.Level.WARN)
+    @Message(id = 9, value = "Failed to auto-create tenant '%s'. Subsequent requests will probably fail.")
+    void warnFailedToAutocreateTenant(String tenant, @Cause Throwable cause);
 }

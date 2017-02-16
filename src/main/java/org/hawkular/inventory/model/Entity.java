@@ -25,6 +25,9 @@ import java.util.Set;
 import org.hawkular.inventory.paths.CanonicalPath;
 import org.hawkular.inventory.paths.SegmentType;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 /**
  * @author Lukas Krejci
  * @since 2.0.0
@@ -50,7 +53,13 @@ public final class Entity {
         return at(CanonicalPath.fromString(path));
     }
 
-    public Entity(CanonicalPath path, String name, Map<String, String> properties) {
+    public static Blueprint.Builder blueprint(String id) {
+        return new Blueprint.Builder(id);
+    }
+
+    @JsonCreator
+    public Entity(@JsonProperty("path") CanonicalPath path, @JsonProperty("name") String name,
+                  @JsonProperty("properties") Map<String, String> properties) {
         this.path = path;
         this.name = name;
         this.properties = properties;
@@ -66,6 +75,10 @@ public final class Entity {
 
     public Map<String, String> getProperties() {
         return properties;
+    }
+
+    public Blueprint asBlueprint() {
+        return new Blueprint(path.getSegment().getElementId(), name, properties);
     }
 
     @Override public boolean equals(Object o) {
@@ -91,17 +104,24 @@ public final class Entity {
     }
 
     public static final class Blueprint {
+        private final String id;
         private final String name;
         private final Map<String, String> properties;
 
         private Blueprint() {
+            id = null;
             name = null;
             properties = null;
         }
 
-        public Blueprint(String name, Map<String, String> properties) {
+        public Blueprint(String id, String name, Map<String, String> properties) {
+            this.id = id;
             this.name = name;
-            this.properties = Collections.unmodifiableMap(properties);
+            this.properties = properties == null ? Collections.emptyMap() : Collections.unmodifiableMap(properties);
+        }
+
+        public String getId() {
+            return id;
         }
 
         public String getName() {
@@ -110,6 +130,60 @@ public final class Entity {
 
         public Map<String, String> getProperties() {
             return properties == null ? Collections.emptyMap() : properties;
+        }
+
+        public Entity asEntity(CanonicalPath parent, SegmentType entityType) {
+            return new Entity(parent.extend(entityType, id).get(), name, properties);
+        }
+
+        @Override public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof Blueprint)) return false;
+
+            Blueprint blueprint = (Blueprint) o;
+
+            return id != null ? id.equals(blueprint.id) : blueprint.id == null;
+        }
+
+        @Override public int hashCode() {
+            return id != null ? id.hashCode() : 0;
+        }
+
+        public static final class Builder {
+            private final String id;
+            private String name;
+            private Map<String, String> properties;
+
+            private Builder(String id) {
+                this.id = id;
+            }
+
+            public Builder withName(String name) {
+                this.name = name;
+                return this;
+            }
+
+            public Builder withProperty(String key, String value) {
+                if (properties == null) {
+                    properties = new HashMap<>();
+                }
+
+                properties.put(key, value);
+                return this;
+            }
+
+            public Builder withProperties(Map<String, String> props) {
+                if (properties == null) {
+                    properties = new HashMap<>();
+                }
+
+                properties.putAll(props);
+                return this;
+            }
+
+            public Blueprint build() {
+                return new Blueprint(id, name, properties);
+            }
         }
     }
 

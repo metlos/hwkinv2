@@ -35,7 +35,11 @@ import rx.Subscriber;
  * @author Lukas Krejci
  * @since 2.0.0
  */
-final class Util {
+public final class Util {
+
+    static String getTenantId(HttpServletRequest request) {
+        return request.getHeader(AutoCreateTenantRequestFilter.TENANT_HEADER_NAME);
+    }
 
     static CanonicalPath getPath(UriInfo uriInfo, HttpServletRequest request, int excludedPrefixLength,
                                  int excludeSuffixLength) {
@@ -44,7 +48,7 @@ final class Util {
             chopped = chopped.substring(0, chopped.length() - excludeSuffixLength);
         }
 
-        String tenantId = request.getHeader(AutoCreateTenantRequestFilter.TENANT_HEADER_NAME);
+        String tenantId = getTenantId(request);
 
         return CanonicalPath.fromPartiallyUntypedString(chopped, CanonicalPath.of().tenant(tenantId).get(),
                 (SegmentType) null);
@@ -71,6 +75,51 @@ final class Util {
 
     public static <T> Subscriber<T> emitSingleResult(AsyncResponse response, Function<T, Response> responseBuilder) {
         return new SingleItemEmitter<>(response, responseBuilder);
+    }
+
+    public static SegmentType getSegmentTypeFromSimpleName(String simpleName) {
+        String name = simpleName;
+
+        //this is the exception that we use for readability reasons...
+        if ("data".equals(simpleName)) {
+            return SegmentType.d;
+        }
+
+        //fast track
+        SegmentType st = SegmentType.fastValueOf(name);
+        if (st != null) {
+            return st;
+        }
+
+        //try with simple name, ignore the first letter in lower case
+        if (Character.isLowerCase(name.charAt(0))) {
+            name = Character.toUpperCase(name.charAt(0)) + name.substring(1);
+        }
+
+        for (SegmentType seg : SegmentType.values()) {
+            if (seg.getSimpleName().equals(name)) {
+                return seg;
+            }
+        }
+
+        //try with the whole name lowercase
+        for (SegmentType seg : SegmentType.values()) {
+            if (seg.getSimpleName().toLowerCase().equals(name)) {
+                return seg;
+            }
+        }
+
+        throw new IllegalArgumentException("Could not find the entity type corresponding to '" + simpleName + "'.");
+    }
+
+
+    public static Throwable getRootCause(Throwable t) {
+        Throwable cause;
+        while ((cause = t.getCause()) != null) {
+            t = cause;
+        }
+
+        return t;
     }
 
     public static final class SingleItemEmitter<T> extends Subscriber<T> {

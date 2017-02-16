@@ -48,7 +48,10 @@ final class Deployments {
                         "org.hawkular.inventory.backend",
                         "org.hawkular.inventory.model",
                         "org.hawkular.inventory.rest",
-                        "org.hawkular.inventory.logging")
+                        "org.hawkular.inventory.rest.mappers",
+                        "org.hawkular.inventory.logging",
+                        "org.hawkular.inventory.serialization",
+                        "org.hawkular.inventory.serialization.mixins")
                 .addAsWebInfResource(EmptyAsset.INSTANCE, "beans.xml")
                 .addAsResource(new FileAsset(schema), "schema/cassalog-schema.groovy")
                 .addAsResource(new FileAsset(configProps), "hawkular-inventory.properties")

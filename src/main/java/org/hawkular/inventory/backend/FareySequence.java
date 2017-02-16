@@ -24,7 +24,9 @@ import java.util.Iterator;
  * @author Lukas Krejci
  * @since 2.0.0
  */
-final class FareySequence {
+public final class FareySequence {
+
+    private static final MathContext PRECISION = MathContext.DECIMAL128;
 
     public static Interval intervalForPath(Iterable<Integer> treePath) {
         RationalNumber low = new RationalNumber(1, 2);
@@ -53,6 +55,10 @@ final class FareySequence {
         public Interval(RationalNumber low, RationalNumber high) {
             this.low = low;
             this.high = high;
+
+            if (low.toDecimal().equals(high.toDecimal())) {
+                throw new IllegalArgumentException("The interval is below the current resolution: " + PRECISION);
+            }
         }
 
         public RationalNumber getLow() {
@@ -105,7 +111,7 @@ final class FareySequence {
         }
 
         public BigDecimal toDecimal() {
-            return new BigDecimal(numerator).divide(new BigDecimal(denominator), MathContext.DECIMAL128);
+            return new BigDecimal(numerator).divide(new BigDecimal(denominator), PRECISION);
         }
 
         @Override public boolean equals(Object o) {

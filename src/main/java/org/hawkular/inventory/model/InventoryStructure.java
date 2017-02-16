@@ -18,12 +18,12 @@ package org.hawkular.inventory.model;
 
 import java.io.Serializable;
 import java.util.Collections;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
-import org.hawkular.inventory.paths.CanonicalPath;
 import org.hawkular.inventory.paths.RelativePath;
 import org.hawkular.inventory.paths.SegmentType;
 
@@ -33,75 +33,96 @@ import org.hawkular.inventory.paths.SegmentType;
  */
 public final class InventoryStructure implements Serializable {
 
-    private final Entity root;
-    private final Map<CanonicalPath, Set<Entity>> children;
-    private final Map<CanonicalPath, Entity> entities;
+    private final Entity.Blueprint root;
+    private final SegmentType rootType;
+    private final Map<RelativePath, Map<SegmentType, Set<Entity.Blueprint>>> children;
+    private final Map<RelativePath, Entity.Blueprint> entities;
 
-    private InventoryStructure(Entity root, Map<CanonicalPath, Entity> entities,
-                               Map<CanonicalPath, Set<Entity>> children) {
+    private InventoryStructure(SegmentType rootType, Entity.Blueprint root, Map<RelativePath,
+                               Entity.Blueprint> entities,
+                               Map<RelativePath, Map<SegmentType, Set<Entity.Blueprint>>> children) {
         this.root = root;
+        this.rootType = rootType;
         this.children = children;
         this.entities = Collections.unmodifiableMap(entities);
     }
 
-    public static Builder of(Entity root) {
-        return new Builder(root);
+    public static Builder of(Entity entity) {
+        return of(entity.getPath().getSegment().getElementType(), entity.asBlueprint());
     }
 
-    public Entity getRoot() {
+    public static Builder of(SegmentType rootType, Entity.Blueprint root) {
+        return new Builder(rootType, root);
+    }
+
+    public Entity.Blueprint getRoot() {
         return root;
     }
 
-    public Entity get(RelativePath path) {
-        CanonicalPath cp = path.applyTo(root.getPath());
-        return entities.get(cp);
+    public SegmentType getRootType() {
+        return rootType;
     }
 
-    public Set<Entity> getChildren(RelativePath parent) {
-        CanonicalPath parentCp = parent.applyTo(root.getPath());
-        return children.getOrDefault(parentCp, Collections.emptySet());
+    public Entity.Blueprint get(RelativePath path) {
+        return entities.get(path);
     }
 
-    public Map<CanonicalPath, Entity> getAllEntities() {
+    public Set<Entity.Blueprint> getChildren(RelativePath parent, SegmentType childrenType) {
+        return children.getOrDefault(parent, Collections.emptyMap()).getOrDefault(childrenType, Collections.emptySet());
+    }
+
+    public Map<SegmentType, Set<Entity.Blueprint>> getAllChildren(RelativePath parent) {
+        return children.getOrDefault(parent, Collections.emptyMap());
+    }
+
+    public Map<RelativePath, Entity.Blueprint> getAllEntities() {
         return entities;
     }
 
     public static class AbstractBuilder<This extends AbstractBuilder<?>> {
-        final CanonicalPath myPath;
-        final Map<CanonicalPath, Set<Entity>> children;
-        final Map<CanonicalPath, Entity> entities;
+        final RelativePath myPath;
+        final Map<RelativePath, Map<SegmentType, Set<Entity.Blueprint>>> children;
+        final Map<RelativePath, Entity.Blueprint> entities;
 
-        private AbstractBuilder(CanonicalPath myPath, Map<CanonicalPath, Set<Entity>> children,
-                                Map<CanonicalPath, Entity> entities) {
+        private AbstractBuilder(RelativePath myPath,
+                                Map<RelativePath, Map<SegmentType, Set<Entity.Blueprint>>> children,
+                                Map<RelativePath, Entity.Blueprint> entities) {
             this.myPath = myPath;
             this.children = children;
             this.entities = entities;
         }
 
-        public ChildBuilder<This> startChild(Entity e) {
-            if (!e.getPath().up().equals(myPath)) {
-                throw new IllegalArgumentException("Child's path doesn't extend the path of the current element.");
-            }
-
-            getChildrenOfType(e.getPath().getSegment().getElementType()).add(e);
-
-            entities.put(e.getPath(), e);
-
-            return new ChildBuilder<>(e.getPath(), castThis(), children, entities);
+        public ChildBuilder<This> startChild(Entity child) {
+            return startChild(child.getPath().getSegment().getElementType(), child.asBlueprint());
         }
 
-        public This addChild(Entity e) {
-            if (!e.getPath().up().equals(myPath)) {
-                throw new IllegalArgumentException("Child's path doesn't extend the path of the current element.");
+        public ChildBuilder<This> startChild(SegmentType childType, Entity.Blueprint e) {
+            RelativePath.Extender newPath = myPath.modified();
+
+            if (!newPath.canExtendTo(childType)) {
+                throw new IllegalArgumentException("Child's path cannot extend the path of the current element.");
             }
 
-            getChildrenOfType(e.getPath().getSegment().getElementType()).add(e);
-            entities.put(e.getPath(), e);
-            return castThis();
+            getChildrenOfType(childType).add(e);
+
+            RelativePath childPath = newPath.extend(childType, e.getId()).get();
+            entities.put(childPath, e);
+
+            return new ChildBuilder<>(childPath, castThis(), children, entities);
         }
 
-        Set<Entity> getChildrenOfType(SegmentType type) {
-            return children.computeIfAbsent(myPath, k -> new HashSet<>());
+        public This addChild(Entity entity) {
+            return addChild(entity.getPath().getSegment().getElementType(), entity.asBlueprint());
+        }
+
+        public This addChild(SegmentType childType, Entity.Blueprint e) {
+            return startChild(childType, e).end();
+        }
+
+        Set<Entity.Blueprint> getChildrenOfType(SegmentType type) {
+            return children
+                    .computeIfAbsent(myPath, k -> new EnumMap<>(SegmentType.class))
+                    .computeIfAbsent(type, k -> new HashSet<>());
         }
 
         @SuppressWarnings("unchecked")
@@ -111,24 +132,27 @@ public final class InventoryStructure implements Serializable {
     }
 
     public static final class Builder extends AbstractBuilder<Builder> {
-        final Entity root;
-        private Builder(Entity root) {
-            super(root.getPath(), new HashMap<>(), new HashMap<>());
+        final Entity.Blueprint root;
+        final SegmentType rootType;
+
+        private Builder(SegmentType rootType, Entity.Blueprint root) {
+            super(RelativePath.empty().get(), new HashMap<>(), new HashMap<>());
             this.root = root;
-            entities.put(root.getPath(), root);
+            this.rootType = rootType;
+            entities.put(myPath, root);
         }
 
         public InventoryStructure build() {
-            return new InventoryStructure(root, entities, children);
+            return new InventoryStructure(rootType, root, entities, children);
         }
     }
 
     public static final class ChildBuilder<Parent extends AbstractBuilder<?>> extends AbstractBuilder<ChildBuilder<Parent>> {
         private final Parent parent;
 
-        private ChildBuilder(CanonicalPath myPath, Parent parent,
-                             Map<CanonicalPath, Set<Entity>> children,
-                             Map<CanonicalPath, Entity> entities) {
+        private ChildBuilder(RelativePath myPath, Parent parent,
+                             Map<RelativePath, Map<SegmentType, Set<Entity.Blueprint>>> children,
+                             Map<RelativePath, Entity.Blueprint> entities) {
             super(myPath, children, entities);
             this.parent = parent;
         }

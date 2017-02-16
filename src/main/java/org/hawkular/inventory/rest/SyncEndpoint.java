@@ -73,7 +73,6 @@ public class SyncEndpoint {
 
         SyncRequest request = mapper.readValue(input, SyncRequest.class);
 
-        inventory.sync(request).subscribe(Util.emitSingleResult(response, any -> Response.noContent().build()));
+        inventory.sync(root, request).subscribe(Util.emitSingleResult(response, any -> Response.noContent().build()));
     }
-
 }
