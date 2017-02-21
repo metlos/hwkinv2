@@ -37,6 +37,7 @@ import org.cassalog.core.CassalogBuilder;
 import org.hawkular.inventory.logging.Log;
 import org.hawkular.inventory.model.Entity;
 import org.hawkular.inventory.model.InventoryStructure;
+import org.hawkular.inventory.model.Relationship;
 import org.hawkular.inventory.model.SyncRequest;
 import org.hawkular.inventory.paths.CanonicalPath;
 import org.hawkular.inventory.paths.RelativePath;
@@ -212,6 +213,138 @@ public class InventoryStorage {
         return _upsert(entity, false).map(e -> null);
     }
 
+    public Observable<Void> delete(CanonicalPath cp) {
+        if (cp.getSegment().getElementType() == SegmentType.rl) {
+            return deleteRelationship(cp);
+        } else {
+            return deleteEntity(cp);
+        }
+    }
+
+    private Observable<Void> deleteRelationship(CanonicalPath cp) {
+        Relationship components = Relationship.fromCanonicalPath(cp, Collections.emptyMap());
+        String relCp = cp.toString();
+        String sourceCp = components.getSource().toString();
+        String targetCp = components.getTarget().toString();
+        String name = components.getName();
+
+        return Observable.merge(
+                statements.deleteRelationship(relCp),
+                statements.deleteOutRelationship(sourceCp, name, targetCp),
+                statements.deleteInRelationship(targetCp, name, sourceCp));
+    }
+
+    private Observable<Void> deleteEntity(CanonicalPath cp) {
+        String tenantId = cp.ids().getTenantId();
+        String fid = cp.ids().getFeedId();
+        String feedId = fid == null ? FAKE_FEED_ID_FOR_TENANT : fid;
+        String entityType = cp.getSegment().getElementType().toString();
+        String entityPath = cp.toString();
+
+        return statements.findByPath(tenantId, feedId, entityType, entityPath)
+                .flatMap(entityRow -> {
+                    BigDecimal low = entityRow.getDecimal("low");
+                    BigDecimal high = entityRow.getDecimal("high");
+
+                    return statements.getAllChildrenPaths(tenantId, feedId, low, high);
+                })
+                .map(r -> r.getString(0))
+                .toSortedList((a, b) -> a.length() - b.length())
+                .flatMap(childPaths -> {
+                    Observable<Void> chain = Observable.empty();
+                    for (String childPath : childPaths) {
+                        String childType = CanonicalPath.fromString(childPath).getSegment().getElementType().toString();
+                        chain = chain.mergeWith(statements.deleteEntity(tenantId, feedId, childType, childPath)
+                                .doOnNext(any -> childrenCountCache.decrementAndGet(cp)));
+                    }
+
+                    //XXX we're issuing a delete statement for each child here... maybe it'd be better to use IN clause
+                    //and do one big statement for all children?
+                    return chain;
+                }).toList().flatMap(allDone -> statements.deleteEntity(tenantId, feedId, entityType, entityPath)
+                        .doOnNext(any -> childrenCountCache.decrementAndGet(cp.up())));
+
+    }
+
+    public Observable<Void> sync(CanonicalPath rootPath, SyncRequest syncRequest) {
+        //first delete everything under the root
+        String tenantId = rootPath.ids().getTenantId();
+        String feedId = rootPath.ids().getFeedId();
+
+        Map<RelativePath, Entity.Blueprint> entities = syncRequest.getInventoryStructure().getAllEntities();
+
+        Entity.Blueprint rootBlueprint = syncRequest.getInventoryStructure().getRoot();
+
+        Entity rootEntity = new Entity(rootPath, rootBlueprint.getName(), rootBlueprint.getProperties());
+
+        return _upsert(rootEntity, true).flatMap(fe -> {
+            Observable<Void> deleteWork = statements.getAllChildrenPaths(tenantId, feedId, fe.low, fe.high)
+                    .map(r -> CanonicalPath.fromString(r.getString(0)))
+                    .flatMap(cp -> {
+                        if (!entities.containsKey(cp.relativeTo(rootPath))) {
+                            String childType = cp.getSegment().getElementType().toString();
+                            String childPath = cp.toString();
+                            Log.LOG.trace("IN SYNC: Deleting " + childPath + ", because it's not in the sync request.");
+                            return statements.deleteEntity(tenantId, feedId, childType, childPath)
+                                    .doOnNext(any -> childrenCountCache.decrementAndGet(cp.up()));
+                        } else {
+                            return Observable.empty();
+                        }
+                    });
+
+            //concat the inserts after the deletes so that the child counts don't get mixed...
+            return deleteWork
+                    .concatWith(insertRecursively(syncRequest.getInventoryStructure(), rootPath,
+                            RelativePath.empty().get()));
+        });
+    }
+
+    public Observable<Void> relate(CanonicalPath source, CanonicalPath target, String name,
+                                   Map<String, String> properties) {
+        String sourceCp = source.toString();
+        String targetCp = target.toString();
+        String relCp =
+                CanonicalPath.of().relationship(Relationship.componentsToId(source, target, name)).get().toString();
+
+        return statements.insertRelationship(relCp, name, properties).concatWith(
+                Observable.merge(statements.insertRelationshipOut(sourceCp, name, targetCp, properties),
+                        statements.insertRelationshipIn(targetCp, name, sourceCp, properties))
+        );
+    }
+
+    public Observable<Relationship> findOutRelationships(CanonicalPath sourceEntity, String name) {
+        return statements.findOutRelationships(sourceEntity.toString(), name).map(r -> {
+            String targetCp = r.getString("target_cp");
+            Map<String, String> props = r.getMap("properties", String.class, String.class);
+
+            CanonicalPath target = CanonicalPath.fromString(targetCp);
+
+            return new Relationship(sourceEntity, target, name, props);
+        });
+    }
+
+    public Observable<Relationship> findInRelationships(CanonicalPath targetEntity, String name) {
+        return statements.findInRelationships(targetEntity.toString(), name).map(r -> {
+            String sourceCp = r.getString("source_cp");
+            Map<String, String> props = r.getMap("properties", String.class, String.class);
+
+            CanonicalPath source = CanonicalPath.fromString(sourceCp);
+
+            return new Relationship(source, targetEntity, name, props);
+        });
+    }
+
+    public Observable<Void> updateRelationship(Relationship rel) {
+        return statements.updateRelationshipIfExists(rel.getPath().toString(), rel.getProperties()).concatWith(
+                Observable.merge(
+                        statements.updateOutRelationshipIfExists(rel.getSource().toString(), rel.getName(),
+                                rel.getTarget().toString(), rel.getProperties()),
+                        statements.updateInRelationshipIfExists(rel.getTarget().toString(), rel.getName(),
+                                rel.getSource().toString(), rel.getProperties())
+                )
+        );
+    }
+
     private Observable<FullEntity> _upsert(Entity entity, boolean needFullEntity) {
         String tenantId = entity.getPath().ids().getTenantId();
         String fId = entity.getPath().ids().getFeedId();
@@ -296,70 +429,6 @@ public class InventoryStorage {
                                     + parentPath.toString() + ").")));
                 }
             }
-        });
-    }
-
-    public Observable<Void> delete(CanonicalPath cp) {
-        String tenantId = cp.ids().getTenantId();
-        String fid = cp.ids().getFeedId();
-        String feedId = fid == null ? FAKE_FEED_ID_FOR_TENANT : fid;
-        String entityType = cp.getSegment().getElementType().toString();
-        String entityPath = cp.toString();
-
-        return statements.findByPath(tenantId, feedId, entityType, entityPath)
-                .flatMap(entityRow -> {
-                    BigDecimal low = entityRow.getDecimal("low");
-                    BigDecimal high = entityRow.getDecimal("high");
-
-                    return statements.getAllChildrenPaths(tenantId, feedId, low, high);
-                })
-                .map(r -> r.getString(0))
-                .toSortedList((a, b) -> a.length() - b.length())
-                .flatMap(childPaths -> {
-                    Observable<Void> chain = Observable.empty();
-                    for (String childPath : childPaths) {
-                        String childType = CanonicalPath.fromString(childPath).getSegment().getElementType().toString();
-                        chain = chain.mergeWith(statements.deleteEntity(tenantId, feedId, childType, childPath)
-                                .doOnNext(any -> childrenCountCache.decrementAndGet(cp)));
-                    }
-
-                    //XXX we're issuing a delete statement for each child here... maybe it'd be better to use IN clause
-                    //and do one big statement for all children?
-                    return chain;
-                }).toList().flatMap(allDone -> statements.deleteEntity(tenantId, feedId, entityType, entityPath)
-                        .doOnNext(any -> childrenCountCache.decrementAndGet(cp.up())));
-    }
-
-    public Observable<Void> sync(CanonicalPath rootPath, SyncRequest syncRequest) {
-        //first delete everything under the root
-        String tenantId = rootPath.ids().getTenantId();
-        String feedId = rootPath.ids().getFeedId();
-
-        Map<RelativePath, Entity.Blueprint> entities = syncRequest.getInventoryStructure().getAllEntities();
-
-        Entity.Blueprint rootBlueprint = syncRequest.getInventoryStructure().getRoot();
-
-        Entity rootEntity = new Entity(rootPath, rootBlueprint.getName(), rootBlueprint.getProperties());
-
-        return _upsert(rootEntity, true).flatMap(fe -> {
-            Observable<Void> deleteWork = statements.getAllChildrenPaths(tenantId, feedId, fe.low, fe.high)
-                    .map(r -> CanonicalPath.fromString(r.getString(0)))
-                    .flatMap(cp -> {
-                        if (!entities.containsKey(cp.relativeTo(rootPath))) {
-                            String childType = cp.getSegment().getElementType().toString();
-                            String childPath = cp.toString();
-                            Log.LOG.trace("IN SYNC: Deleting " + childPath + ", because it's not in the sync request.");
-                            return statements.deleteEntity(tenantId, feedId, childType, childPath)
-                                    .doOnNext(any -> childrenCountCache.decrementAndGet(cp.up()));
-                        } else {
-                            return Observable.empty();
-                        }
-                    });
-
-            //concat the inserts after the deletes so that the child counts don't get mixed...
-            return deleteWork
-                    .concatWith(insertRecursively(syncRequest.getInventoryStructure(), rootPath,
-                            RelativePath.empty().get()));
         });
     }
 

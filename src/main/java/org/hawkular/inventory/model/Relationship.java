@@ -20,22 +20,48 @@ import java.util.Map;
 
 import org.hawkular.inventory.paths.CanonicalPath;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 /**
  * @author Lukas Krejci
  * @since 2.0.0
  */
 public final class Relationship {
+    private final CanonicalPath cp;
     private final CanonicalPath source;
     private final CanonicalPath target;
     private final String name;
     private final Map<String, String> properties;
 
+    public static String componentsToId(CanonicalPath source, CanonicalPath target, String name) {
+        return source.toString() + "\u0010" + name + "\u0010" + target.toString();
+    }
+
+    public static CanonicalPath componentsToCp(CanonicalPath source, CanonicalPath target, String name) {
+        return CanonicalPath.of().relationship(componentsToId(source, target, name)).get();
+    }
+
+    public static Relationship fromCanonicalPath(CanonicalPath relationshipCp, Map<String, String> properties) {
+        String[] components = relationshipCp.getSegment().getElementId().split("\u0010");
+        CanonicalPath source = CanonicalPath.fromString(components[0]);
+        String name = components[1];
+        CanonicalPath target = CanonicalPath.fromString(components[2]);
+        return new Relationship(source, target, name, properties);
+    }
+
     public Relationship(CanonicalPath source, CanonicalPath target, String name,
                         Map<String, String> properties) {
+        String id = componentsToId(source, target, name);
+        this.cp = CanonicalPath.of().relationship(id).get();
         this.source = source;
         this.target = target;
         this.name = name;
         this.properties = properties;
+    }
+
+    public CanonicalPath getPath() {
+        return cp;
     }
 
     public CanonicalPath getSource() {
@@ -80,5 +106,31 @@ public final class Relationship {
         sb.append(", properties=").append(properties);
         sb.append(']');
         return sb.toString();
+    }
+
+    public static final class Blueprint {
+        private final CanonicalPath otherEnd;
+        private final String name;
+        private final Map<String, String> properties;
+
+        @JsonCreator
+        public Blueprint(@JsonProperty("otherEnd") CanonicalPath otherEnd, @JsonProperty("name") String name,
+                         @JsonProperty("properties") Map<String, String> properties) {
+            this.otherEnd = otherEnd;
+            this.name = name;
+            this.properties = properties;
+        }
+
+        public CanonicalPath getOtherEnd() {
+            return otherEnd;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public Map<String, String> getProperties() {
+            return properties;
+        }
     }
 }

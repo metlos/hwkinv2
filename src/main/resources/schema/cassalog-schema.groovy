@@ -70,3 +70,37 @@ CREATE INDEX entityTree_high ON entityTree (high)
 CREATE INDEX entityTree_depth ON entityTree (depth)
 """])
 }
+
+schemaChange {
+    version '2.0.0.3'
+    author 'Lukas Krejci'
+    tags '2.0.0'
+    description 'Add support for generic relationships'
+    cql (["""
+CREATE TABLE relationship (
+    cp text,
+    name text,
+    properties map<text, text>,
+
+    PRIMARY KEY (cp)
+) WITH compaction = {'class': 'LeveledCompactionStrategy'}
+""", """
+CREATE TABLE relationship_out (
+    source_cp text,
+    name text,
+    target_cp text,
+    properties map<text, text>,
+
+    PRIMARY KEY (source_cp, name, target_cp)
+) WITH compaction = {'class': 'LeveledCompactionStrategy'}
+""", """
+CREATE TABLE relationship_in (
+    target_cp text,
+    name text,
+    source_cp text,
+    properties map<text, text>,
+
+    PRIMARY KEY (target_cp, name, source_cp)
+) WITH compaction = {'class': 'LeveledCompactionStrategy'}
+"""])
+}

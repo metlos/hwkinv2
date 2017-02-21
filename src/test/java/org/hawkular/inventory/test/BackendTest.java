@@ -17,6 +17,8 @@
 package org.hawkular.inventory.test;
 
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.CountDownLatch;
 
@@ -27,6 +29,7 @@ import org.hawkular.inventory.backend.InventoryStorage;
 import org.hawkular.inventory.logging.Log;
 import org.hawkular.inventory.model.Entity;
 import org.hawkular.inventory.model.InventoryStructure;
+import org.hawkular.inventory.model.Relationship;
 import org.hawkular.inventory.model.SyncRequest;
 import org.hawkular.inventory.paths.CanonicalPath;
 import org.jboss.arquillian.container.test.api.Deployment;
@@ -97,11 +100,7 @@ public class BackendTest {
                 .addChild(mt1)
                 .build();
 
-        CountDownLatch latch = new CountDownLatch(1);
-
-        storage.sync(fd.getPath(), SyncRequest.syncEverything(struct)).subscribe(onceFinished(latch::countDown));
-
-        latch.await();
+        waitFor(storage.sync(fd.getPath(), SyncRequest.syncEverything(struct)));
 
         Assert.assertEquals(1, count(storage.findByPath(fd.getPath())));
         Assert.assertEquals(1, count(storage.findByPath(r1.getPath())));
@@ -134,11 +133,7 @@ public class BackendTest {
                 .addChild(mt1)
                 .build();
 
-        CountDownLatch latch = new CountDownLatch(1);
-
-        storage.sync(fd.getPath(), SyncRequest.syncEverything(struct)).subscribe(onceFinished(latch::countDown));
-
-        latch.await();
+        waitFor(storage.sync(fd.getPath(), SyncRequest.syncEverything(struct)));
 
         Assert.assertEquals(1, count(storage.findByPath(fd.getPath())));
         Assert.assertEquals(1, count(storage.findByPath(r1.getPath())));
@@ -193,6 +188,58 @@ public class BackendTest {
         }
     }
 
+    @Test
+    public void testRelate() throws Exception {
+        CanonicalPath source = CanonicalPath.of().tenant("t").feed("f").get();
+        CanonicalPath target = CanonicalPath.of().tenant("t").feed("f2").get();
+
+        waitFor(storage.upsert(Entity.at(source).build()));
+        waitFor(storage.upsert(Entity.at(target).build()));
+        waitFor(storage.relate(source, target, "rel", Collections.emptyMap()));
+
+        Assert.assertEquals(1, count(storage.findOutRelationships(source, "rel")));
+        Assert.assertEquals(1, count(storage.findInRelationships(target, "rel")));
+        Assert.assertEquals(0, count(storage.findInRelationships(source, "rel")));
+        Assert.assertEquals(0, count(storage.findOutRelationships(target, "rel")));
+    }
+
+    @Test
+    public void testUpdateRelationship() throws Exception {
+        CanonicalPath source = CanonicalPath.of().tenant("t").feed("f").get();
+        CanonicalPath target = CanonicalPath.of().tenant("t").feed("f2").get();
+
+        waitFor(storage.upsert(Entity.at(source).build()));
+        waitFor(storage.upsert(Entity.at(target).build()));
+        waitFor(storage.relate(source, target, "rel", Collections.emptyMap()));
+
+        Map<String, String> props = new HashMap<>(1);
+        props.put("a", "b");
+        Relationship update = new Relationship(source, target, "rel", props);
+
+        waitFor(storage.updateRelationship(update));
+
+        Relationship out = storage.findOutRelationships(source, "rel").toBlocking().first();
+        Assert.assertEquals("b", out.getProperties().get("a"));
+
+        Relationship in = storage.findInRelationships(target, "rel").toBlocking().first();
+        Assert.assertEquals("b", in.getProperties().get("a"));
+    }
+
+    @Test
+    public void testDeleteRelationship() throws Exception {
+        CanonicalPath source = CanonicalPath.of().tenant("t").feed("f").get();
+        CanonicalPath target = CanonicalPath.of().tenant("t").feed("f2").get();
+
+        waitFor(storage.upsert(Entity.at(source).build()));
+        waitFor(storage.upsert(Entity.at(target).build()));
+        waitFor(storage.relate(source, target, "rel", Collections.emptyMap()));
+
+        waitFor(storage.delete(Relationship.componentsToCp(source, target, "rel")));
+
+        Assert.assertEquals(0, count(storage.findOutRelationships(source, "rel")));
+        Assert.assertEquals(0, count(storage.findInRelationships(target, "rel")));
+    }
+
     private int count(Observable<?> col) {
         return col.count().toBlocking().single();
     }
@@ -211,5 +258,13 @@ public class BackendTest {
             @Override public void onNext(T o) {
             }
         };
+    }
+
+    private void waitFor(Observable<?> cold) throws InterruptedException {
+        CountDownLatch latch = new CountDownLatch(1);
+
+        cold.subscribe(onceFinished(latch::countDown));
+
+        latch.await();
     }
 }
